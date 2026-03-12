@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'screens/contractor_home_page.dart';
 
 void main() {
   runApp(const MyApp());
@@ -13,60 +14,132 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return const MaterialApp(
       debugShowCheckedModeBanner: false,
-      home: TestApiPage(),
+      home: LoginPage(),
     );
   }
 }
 
-class TestApiPage extends StatefulWidget {
-  const TestApiPage({super.key});
+class LoginPage extends StatefulWidget {
+  const LoginPage({super.key});
 
   @override
-  State<TestApiPage> createState() => _TestApiPageState();
+  State<LoginPage> createState() => _LoginPageState();
 }
 
-class _TestApiPageState extends State<TestApiPage> {
-  String message = "Chargement...";
+class _LoginPageState extends State<LoginPage> {
+  final TextEditingController emailController = TextEditingController();
+  final TextEditingController passwordController = TextEditingController();
 
-  @override
-  void initState() {
-    super.initState();
-    fetchMessage();
-  }
+  String message = '';
+  bool isLoading = false;
 
-  Future<void> fetchMessage() async {
+  Future<void> login() async {
+    setState(() {
+      isLoading = true;
+      message = '';
+    });
+
     try {
-      final response = await http.get(
-        Uri.parse('http://10.0.2.2:8000/api/test'),
+      final response = await http.post(
+        Uri.parse('http://127.0.0.1:8000/api/login'),
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({
+          'email': emailController.text.trim(),
+          'password': passwordController.text.trim(),
+        }),
       );
 
+      final data = jsonDecode(response.body);
+
+      if (!mounted) return;
+
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
         setState(() {
-          message = data['message'];
+          message = 'Login réussi';
+          isLoading = false;
         });
+
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => const ContractorHomePage(),
+          ),
+        );
       } else {
         setState(() {
-          message = 'Erreur serveur: ${response.statusCode}';
+          message = data['message'] ?? 'Erreur de login';
+          isLoading = false;
         });
       }
     } catch (e) {
+      if (!mounted) return;
+
       setState(() {
         message = 'Erreur connexion: $e';
+        isLoading = false;
       });
     }
+  }
+
+  @override
+  void dispose() {
+    emailController.dispose();
+    passwordController.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Test Laravel API'),
+        title: const Text('Login Flutter'),
       ),
       body: Center(
-        child: Text(
-          message,
-          style: const TextStyle(fontSize: 22),
+        child: SizedBox(
+          width: 350,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              TextField(
+                controller: emailController,
+                decoration: const InputDecoration(
+                  labelText: 'Email',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: passwordController,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: 'Mot de passe',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: isLoading ? null : login,
+                  child: isLoading
+                      ? const SizedBox(
+                          height: 20,
+                          width: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('Se connecter'),
+                ),
+              ),
+              const SizedBox(height: 20),
+              Text(
+                message,
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
         ),
       ),
     );
