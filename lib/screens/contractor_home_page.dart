@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'menus.dart';
+import 'info_derangement.dart';
 
 class ContractorHomePage extends StatefulWidget {
   const ContractorHomePage({super.key});
@@ -53,6 +54,26 @@ class _ContractorHomePageState extends State<ContractorHomePage> {
     );
   }
 
+  void _showDerangementInfo() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => const InfoDerangementSheet(
+        id: 'D-101',
+        nom: 'Dérangement Fibre',
+        typeService: 'Internet / Fibre',
+        priorite: 'Haute',
+        statut: 'En attente',
+        adresse: 'Rue Didouche Mourad, Alger',
+        clientNom: 'Client Test',
+        clientTelephone: '0550 00 00 00',
+        description:
+            'Le client signale une coupure totale de la connexion fibre depuis ce matin.',
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -80,18 +101,21 @@ class _ContractorHomePageState extends State<ContractorHomePage> {
               ),
               MarkerLayer(
                 markers: [
-                  ...derangements.map((point) {
-                    return Marker(
+                  ...derangements.map(
+                    (point) => Marker(
                       point: point,
                       width: 50,
                       height: 50,
-                      child: const Icon(
-                        Icons.location_on,
-                        color: Colors.red,
-                        size: 42,
+                      child: GestureDetector(
+                        onTap: _showDerangementInfo,
+                        child: const Icon(
+                          Icons.location_on,
+                          color: Colors.red,
+                          size: 42,
+                        ),
                       ),
-                    );
-                  }),
+                    ),
+                  ),
                   Marker(
                     point: _currentCenter,
                     width: 50,
@@ -127,9 +151,15 @@ class _ContractorHomePageState extends State<ContractorHomePage> {
                         height: 42,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          border: Border.all(color: Colors.black87, width: 1.5),
+                          border: Border.all(
+                            color: Colors.black87,
+                            width: 1.5,
+                          ),
                         ),
-                        child: const Icon(Icons.menu, color: Colors.black87),
+                        child: const Icon(
+                          Icons.menu,
+                          color: Colors.black87,
+                        ),
                       ),
                     ),
                   ),
@@ -148,7 +178,9 @@ class _ContractorHomePageState extends State<ContractorHomePage> {
                   InkWell(
                     onTap: () {
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Profil placeholder')),
+                        const SnackBar(
+                          content: Text('Profil placeholder'),
+                        ),
                       );
                     },
                     borderRadius: BorderRadius.circular(30),
@@ -157,7 +189,10 @@ class _ContractorHomePageState extends State<ContractorHomePage> {
                       height: 42,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        border: Border.all(color: Colors.black87, width: 1.5),
+                        border: Border.all(
+                          color: Colors.black87,
+                          width: 1.5,
+                        ),
                       ),
                       child: const Icon(
                         Icons.person_outline,
