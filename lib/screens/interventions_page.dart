@@ -1,4 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:mobile_app/l10n/app_localizations.dart';
+import 'package:provider/provider.dart';
+
+import '../config/theme_provider.dart';
+import '../services/api_service.dart';
+import 'main_screen.dart';
 
 class InterventionsPage extends StatefulWidget {
   const InterventionsPage({super.key});
@@ -9,74 +15,104 @@ class InterventionsPage extends StatefulWidget {
 
 class _InterventionsPageState extends State<InterventionsPage> {
   final TextEditingController searchController = TextEditingController();
+  final ApiService _apiService = ApiService();
 
-  final List<Map<String, String>> allItems = [
-    {
-      'id': 'D-101',
-      'title': 'Panne fibre - Client A',
-      'status': 'En cours',
-      'priority': 'Haute',
-    },
-    {
-      'id': 'D-102',
-      'title': 'Installation modem - Client B',
-      'status': 'En attente',
-      'priority': 'Moyenne',
-    },
-    {
-      'id': 'D-103',
-      'title': 'Coupure ligne - Client C',
-      'status': 'Terminée',
-      'priority': 'Basse',
-    },
-    {
-      'id': 'D-104',
-      'title': 'Problème routeur - Client D',
-      'status': 'En cours',
-      'priority': 'Haute',
-    },
-  ];
+  List<dynamic> interventions = [];
+  bool loading = false;
+  String? errorMessage;
+  int nonTraiteCount = 0;
 
-  List<Map<String, String>> filteredItems = [];
+  int selectedLimit = 10;
+  String selectedStatut = 'all';
+
+  static const Color blue = Color(0xFF005BAA);
+  static const Color deepBlue = Color(0xFF003B73);
+  static const Color green = Color(0xFF2F9E63);
+  static const Color bg = Color(0xFFF7FAFD);
+  static const Color textDark = Color(0xFF14213D);
+  static const Color textSoft = Color(0xFF7B8794);
+
+  bool get isDark => context.watch<ThemeProvider>().isDark;
+
+  Color get bgColor => isDark ? const Color(0xFF0F172A) : bg;
+  Color get cardColor => isDark ? const Color(0xFF1E293B) : Colors.white;
+  Color get fieldColor =>
+      isDark ? const Color(0xFF273549) : Colors.white;
+  Color get titleColor => isDark ? Colors.white : textDark;
+  Color get softColor => isDark ? Colors.white70 : textSoft;
+  Color get shadowColor =>
+      isDark ? Colors.black.withOpacity(0.35) : deepBlue.withOpacity(0.08);
+  Color get dividerColor =>
+      isDark ? Colors.white.withOpacity(0.08) : Colors.grey.shade200;
+
+  Future<void> loadCount() async {
+    try {
+      final count = await _apiService.getNonTraiteCount();
+      if (!mounted) return;
+      setState(() => nonTraiteCount = count);
+    } catch (e) {
+      debugPrint('Erreur count: $e');
+    }
+  }
+
+  Future<void> fetchInterventions() async {
+    setState(() {
+      loading = true;
+      errorMessage = null;
+    });
+
+    try {
+      final data = await _apiService.getInterventions(
+        query: searchController.text,
+        statut: selectedStatut,
+        limit: selectedLimit,
+      );
+
+      if (!mounted) return;
+      setState(() => interventions = data);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        interventions = [];
+        errorMessage = e.toString().replaceAll('Exception: ', '');
+      });
+    } finally {
+      if (!mounted) return;
+      setState(() => loading = false);
+    }
+  }
+
+  Color getStatutColor(String? statut) {
+    switch ((statut ?? '').toLowerCase()) {
+      case 'ouverte':
+        return Colors.orange;
+      case 'en_cours':
+        return blue;
+      case 'terminee':
+        return green;
+      default:
+        return Colors.grey;
+    }
+  }
+
+  IconData getStatutIcon(String? statut) {
+    switch ((statut ?? '').toLowerCase()) {
+      case 'ouverte':
+        return Icons.warning_amber_rounded;
+      case 'en_cours':
+        return Icons.sync_rounded;
+      case 'terminee':
+        return Icons.check_circle_outline_rounded;
+      default:
+        return Icons.info_outline_rounded;
+    }
+  }
 
   @override
   void initState() {
     super.initState();
-    filteredItems = List.from(allItems);
-  }
-
-  void filterItems(String query) {
-    setState(() {
-      if (query.trim().isEmpty) {
-        filteredItems = List.from(allItems);
-      } else {
-        filteredItems = allItems.where((item) {
-          final id = item['id']!.toLowerCase();
-          final title = item['title']!.toLowerCase();
-          final status = item['status']!.toLowerCase();
-          final priority = item['priority']!.toLowerCase();
-          final search = query.toLowerCase();
-
-          return id.contains(search) ||
-              title.contains(search) ||
-              status.contains(search) ||
-              priority.contains(search);
-        }).toList();
-      }
-    });
-  }
-
-  Color getPriorityColor(String priority) {
-    switch (priority.toLowerCase()) {
-      case 'haute':
-        return Colors.red;
-      case 'moyenne':
-        return Colors.orange;
-      case 'basse':
-        return Colors.green;
-      default:
-        return Colors.grey;
-    }
+    fetchInterventions();
+    loadCount();
   }
 
   @override
@@ -87,129 +123,508 @@ class _InterventionsPageState extends State<InterventionsPage> {
 
   @override
   Widget build(BuildContext context) {
+    final t = AppLocalizations.of(context)!;
+
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Mes interventions'),
-        backgroundColor: const Color(0xFF4E6CF1),
-        foregroundColor: Colors.white,
+      backgroundColor: bgColor,
+      body: SafeArea(
+        child: Column(
+          children: [
+            _header(t),
+            Expanded(
+              child: loading
+                  ? const Center(
+                      child: CircularProgressIndicator(color: blue),
+                    )
+                  : errorMessage != null
+                      ? _errorBox(errorMessage!)
+                      : interventions.isEmpty
+                          ? _emptyState(t)
+                          : RefreshIndicator(
+                              color: blue,
+                              onRefresh: () async {
+                                await fetchInterventions();
+                                await loadCount();
+                              },
+                              child: ListView.builder(
+                                padding: const EdgeInsets.fromLTRB(
+                                  18,
+                                  8,
+                                  18,
+                                  105,
+                                ),
+                                itemCount: interventions.length,
+                                itemBuilder: (context, index) {
+                                  return _interventionCard(
+                                    item: interventions[index],
+                                    t: t,
+                                    index: index,
+                                  );
+                                },
+                              ),
+                            ),
+            ),
+          ],
+        ),
       ),
-      body: Column(
+    );
+  }
+
+  Widget _header(AppLocalizations t) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-            child: TextField(
-              controller: searchController,
-              onChanged: filterItems,
-              decoration: InputDecoration(
-                hintText: 'Rechercher une intervention...',
-                prefixIcon: const Icon(Icons.search),
-                suffixIcon: searchController.text.isNotEmpty
-                    ? IconButton(
-                        icon: const Icon(Icons.close),
-                        onPressed: () {
-                          searchController.clear();
-                          filterItems('');
-                        },
-                      )
-                    : null,
-                filled: true,
-                fillColor: Colors.grey.shade100,
-                contentPadding: const EdgeInsets.symmetric(vertical: 0),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(14),
-                  borderSide: BorderSide.none,
+          Row(
+            children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [blue, green],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(18),
+                  boxShadow: [
+                    BoxShadow(
+                      color: blue.withOpacity(0.20),
+                      blurRadius: 18,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
+                ),
+                child: const Icon(
+                  Icons.assignment_rounded,
+                  color: Colors.white,
+                  size: 26,
                 ),
               ),
-            ),
-          ),
-          Expanded(
-            child: filteredItems.isEmpty
-                ? const Center(
-                    child: Text(
-                      'Aucune intervention trouvée',
-                      style: TextStyle(fontSize: 16),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      t.myInterventions,
+                      style: TextStyle(
+                        color: titleColor,
+                        fontSize: 26,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: -0.6,
+                      ),
                     ),
-                  )
-                : ListView.builder(
-                    padding: const EdgeInsets.all(12),
-                    itemCount: filteredItems.length,
-                    itemBuilder: (context, index) {
-                      final item = filteredItems[index];
-
-                      return Card(
-                        elevation: 3,
-                        margin: const EdgeInsets.symmetric(vertical: 8),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        child: ListTile(
-                          contentPadding: const EdgeInsets.all(14),
-                          leading: CircleAvatar(
-                            backgroundColor:
-                                const Color(0xFF4E6CF1).withOpacity(0.12),
-                            child: const Icon(
-                              Icons.assignment_outlined,
-                              color: Color(0xFF4E6CF1),
-                            ),
-                          ),
-                          title: Text(
-                            item['id']!,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          subtitle: Padding(
-                            padding: const EdgeInsets.only(top: 6),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(item['title']!),
-                                const SizedBox(height: 6),
-                                Text('Statut : ${item['status']}'),
-                                const SizedBox(height: 4),
-                                Row(
-                                  children: [
-                                    const Text('Priorité : '),
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 8,
-                                        vertical: 3,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: getPriorityColor(
-                                          item['priority']!,
-                                        ).withOpacity(0.12),
-                                        borderRadius: BorderRadius.circular(10),
-                                      ),
-                                      child: Text(
-                                        item['priority']!,
-                                        style: TextStyle(
-                                          color: getPriorityColor(
-                                            item['priority']!,
-                                          ),
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                          trailing: const Icon(Icons.chevron_right),
-                          onTap: () {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text('Ouvrir ${item['id']}'),
-                              ),
-                            );
-                          },
-                        ),
-                      );
-                    },
-                  ),
+                    const SizedBox(height: 4),
+                    Text(
+                      t.unprocessedDerangementsCount(nonTraiteCount),
+                      style: TextStyle(
+                        color: softColor,
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          _searchField(t),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(child: _statusFilter(t)),
+              const SizedBox(width: 10),
+              _limitFilter(t),
+            ],
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _searchField(AppLocalizations t) {
+    return TextField(
+      controller: searchController,
+      onChanged: (_) => fetchInterventions(),
+      style: TextStyle(
+        color: titleColor,
+        fontWeight: FontWeight.w700,
+      ),
+      decoration: InputDecoration(
+        hintText: t.searchReclamation,
+        hintStyle: TextStyle(color: softColor),
+        prefixIcon: const Icon(Icons.search_rounded, color: blue),
+        suffixIcon: searchController.text.isNotEmpty
+            ? IconButton(
+                icon: Icon(Icons.close_rounded, color: softColor),
+                onPressed: () {
+                  searchController.clear();
+                  fetchInterventions();
+                },
+              )
+            : null,
+        filled: true,
+        fillColor: fieldColor,
+        contentPadding: const EdgeInsets.symmetric(vertical: 18),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(24),
+          borderSide: BorderSide.none,
+        ),
+      ),
+    );
+  }
+
+  Widget _statusFilter(AppLocalizations t) {
+    final items = [
+      {'value': 'all', 'label': t.all},
+      {'value': 'ouverte', 'label': t.opened},
+      {'value': 'en_cours', 'label': t.inProgress},
+      {'value': 'terminee', 'label': t.finished},
+      {'value': 'sla_missed', 'label': t.slaMissed},
+      {'value': 'sla_soon', 'label': t.slaSoon},
+
+    ];
+
+    return Container(
+      height: 52,
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      decoration: BoxDecoration(
+        color: fieldColor,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: blue.withOpacity(0.08)),
+        boxShadow: [
+          BoxShadow(
+            color: shadowColor,
+            blurRadius: 16,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: selectedStatut,
+          isExpanded: true,
+          icon: const Icon(Icons.keyboard_arrow_down_rounded, color: blue),
+          style: TextStyle(
+            color: titleColor,
+            fontWeight: FontWeight.w800,
+            fontSize: 14,
+          ),
+          dropdownColor: cardColor,
+          borderRadius: BorderRadius.circular(18),
+          items: items.map((item) {
+            return DropdownMenuItem<String>(
+              value: item['value']!,
+              child: Text(item['label']!),
+            );
+          }).toList(),
+          onChanged: (value) {
+            setState(() => selectedStatut = value ?? 'all');
+            fetchInterventions();
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _limitFilter(AppLocalizations t) {
+    return Container(
+      height: 52,
+      width: 105,
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      decoration: BoxDecoration(
+        color: fieldColor,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: green.withOpacity(0.12)),
+        boxShadow: [
+          BoxShadow(
+            color: shadowColor,
+            blurRadius: 16,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<int>(
+          value: selectedLimit,
+          isExpanded: true,
+          icon: const Icon(Icons.keyboard_arrow_down_rounded, color: green),
+          style: TextStyle(
+            color: titleColor,
+            fontWeight: FontWeight.w800,
+            fontSize: 14,
+          ),
+          dropdownColor: cardColor,
+          borderRadius: BorderRadius.circular(18),
+          items: const [
+            DropdownMenuItem(value: 5, child: Text('5')),
+            DropdownMenuItem(value: 10, child: Text('10')),
+            DropdownMenuItem(value: 20, child: Text('20')),
+            DropdownMenuItem(value: 50, child: Text('50')),
+          ],
+          onChanged: (value) {
+            setState(() => selectedLimit = value ?? 10);
+            fetchInterventions();
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _interventionCard({
+    required dynamic item,
+    required AppLocalizations t,
+    required int index,
+  }) {
+    final id = item['id']?.toString() ?? '';
+    final type = item['type_reclamation']?.toString() ?? t.noType;
+    final description = item['description']?.toString() ?? '';
+    final statut = item['statut']?.toString() ?? '';
+    final client = item['client'];
+    final clientName = client != null
+        ? '${client['prenom'] ?? ''} ${client['nom'] ?? ''}'.trim()
+        : t.unknownClient;
+
+    final statusColor = getStatutColor(statut);
+
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0.94, end: 1),
+      duration: Duration(milliseconds: 240 + (index * 35)),
+      curve: Curves.easeOutBack,
+      builder: (context, value, child) {
+        return Transform.scale(
+          scale: value,
+          child: Opacity(
+            opacity: value.clamp(0.0, 1.0),
+            child: child,
+          ),
+        );
+      },
+      child: GestureDetector(
+        onTap: () {
+          final interventionId = int.tryParse(id);
+
+          if (interventionId == null) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(t.invalidInterventionId)),
+            );
+            return;
+          }
+
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (_) => MainScreen(
+                initialIndex: 0,
+                focusInterventionId: interventionId,
+              ),
+            ),
+          );
+        },
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 14),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: cardColor,
+            borderRadius: BorderRadius.circular(26),
+            border: Border.all(color: blue.withOpacity(0.08)),
+            boxShadow: [
+              BoxShadow(
+                color: shadowColor,
+                blurRadius: 24,
+                offset: const Offset(0, 12),
+              ),
+            ],
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 52,
+                height: 52,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      blue.withOpacity(0.13),
+                      green.withOpacity(0.13),
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(18),
+                ),
+                child: const Icon(
+                  Icons.assignment_outlined,
+                  color: blue,
+                  size: 28,
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${t.reclamationNumber} #$id',
+                      style: TextStyle(
+                        color: titleColor,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      type,
+                      style: const TextStyle(
+                        color: blue,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 14,
+                      ),
+                    ),
+                    if (description.isNotEmpty) ...[
+                      const SizedBox(height: 7),
+                      Text(
+                        description,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: softColor,
+                          fontSize: 13.5,
+                          height: 1.35,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.person_outline_rounded,
+                          color: softColor,
+                          size: 18,
+                        ),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            '${t.clientLabel} : $clientName',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: softColor,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: statusColor.withOpacity(0.13),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            getStatutIcon(statut),
+                            color: statusColor,
+                            size: 16,
+                          ),
+                          const SizedBox(width: 5),
+                          Text(
+                            statut,
+                            style: TextStyle(
+                              color: statusColor,
+                              fontWeight: FontWeight.w900,
+                              fontSize: 12.5,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Icon(
+                Icons.chevron_right_rounded,
+                color: softColor,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _errorBox(String message) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: cardColor,
+            borderRadius: BorderRadius.circular(24),
+            boxShadow: [
+              BoxShadow(
+                color: shadowColor,
+                blurRadius: 24,
+                offset: const Offset(0, 12),
+              ),
+            ],
+          ),
+          child: Text(
+            message,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: titleColor,
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _emptyState(AppLocalizations t) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 96,
+              height: 96,
+              decoration: BoxDecoration(
+                color: blue.withOpacity(0.08),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.inbox_outlined,
+                color: blue,
+                size: 44,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              t.noInterventionFound,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: titleColor,
+                fontSize: 17,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

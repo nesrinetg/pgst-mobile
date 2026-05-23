@@ -1,83 +1,237 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
-import 'menus.dart';
+import 'package:provider/provider.dart';
+ 
+import '../config/theme_provider.dart';
+import '../models/intervention_pointer.dart';
+import '../services/api_service.dart';
 import 'info_derangement.dart';
+import 'notifications_page.dart';
 
 class ContractorHomePage extends StatefulWidget {
-  const ContractorHomePage({super.key});
+  final int? focusInterventionId;
+
+  const ContractorHomePage({
+    super.key,
+    this.focusInterventionId,
+  });
 
   @override
   State<ContractorHomePage> createState() => _ContractorHomePageState();
 }
 
-class _ContractorHomePageState extends State<ContractorHomePage> {
+class _ContractorHomePageState extends State<ContractorHomePage>
+    with SingleTickerProviderStateMixin {
   final MapController _mapController = MapController();
+  final ApiService _apiService = ApiService();
 
   double _currentZoom = 14.5;
   LatLng _currentCenter = LatLng(36.7525, 3.0420);
 
-  final List<LatLng> derangements = [
-    LatLng(36.7538, 3.0588),
-    LatLng(36.7495, 3.0420),
-    LatLng(36.7555, 3.0515),
-    LatLng(36.7478, 3.0602),
-    LatLng(36.7512, 3.0470),
-  ];
+  LatLng? myPosition;
+  List<InterventionPointer> derangements = [];
 
-  void _zoomIn() {
-    setState(() {
-      _currentZoom += 1;
-    });
-    _mapController.move(_currentCenter, _currentZoom);
-  }
+  int unreadCount = 0;
 
-  void _zoomOut() {
-    setState(() {
-      _currentZoom -= 1;
-    });
-    _mapController.move(_currentCenter, _currentZoom);
-  }
+  late AnimationController _animController;
+  late Animation<double> _headerFade;
+  late Animation<Offset> _headerSlide;
+  late Animation<double> _buttonScale;
 
-  void _goToMyLocation() {
-    setState(() {
-      _currentCenter = LatLng(36.7525, 3.0420);
-      _currentZoom = 16;
-    });
+  static const Color blue = Color(0xFF005BAA);
+  static const Color deepBlue = Color(0xFF003B73);
+  static const Color green = Color(0xFF2F9E63);
+  static const Color textDark = Color(0xFF14213D);
 
-    _mapController.move(_currentCenter, _currentZoom);
+  @override
+  void initState() {
+    super.initState();
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Localisation centrée (mode test)'),
+    _animController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 650),
+    );
+
+    _headerFade = CurvedAnimation(
+      parent: _animController,
+      curve: Curves.easeOut,
+    );
+
+    _headerSlide = Tween<Offset>(
+      begin: const Offset(0, -0.10),
+      end: Offset.zero,
+    ).animate(
+      CurvedAnimation(
+        parent: _animController,
+        curve: Curves.easeOutCubic,
       ),
     );
+
+    _buttonScale = Tween<double>(begin: 0.90, end: 1).animate(
+      CurvedAnimation(
+        parent: _animController,
+        curve: Curves.easeOutBack,
+      ),
+    );
+
+    _animController.forward();
+
+    loadNotifications();
+    _loadPointers();
   }
 
-  void _showDerangementInfo() {
+  @override
+  void dispose() {
+    _animController.dispose();
+    super.dispose();
+  }
+
+  void _moveTo(LatLng position, double zoom) {
+    setState(() {
+      _currentCenter = position;
+      _currentZoom = zoom;
+    });
+
+    _mapController.move(position, zoom);
+  }
+
+  String _safe(String? value, String fallback) {
+    return value != null && value.trim().isNotEmpty ? value : fallback;
+  }
+
+  Future<void> loadNotifications() async {
+    try {
+      final data = await _apiService.getSimpleNotifications();
+
+      if (!mounted) return;
+
+      setState(() {
+        unreadCount = data.length;
+      });
+    } catch (e) {
+      debugPrint(e.toString());
+    }
+  }
+
+  Future<void> _loadPointers() async {
+    try {
+      final data = await _apiService.getMapPointers();
+
+      if (!mounted) return;
+
+      setState(() => derangements = data);
+
+      if (widget.focusInterventionId != null) {
+        _focusOnInterventionById(widget.focusInterventionId!);
+        return;
+      }
+
+      if (data.isNotEmpty) {
+        final first = LatLng(data.first.latitude, data.first.longitude);
+        _moveTo(first, _currentZoom);
+      }
+    } catch (e) {
+      debugPrint('Erreur pointeurs: $e');
+    }
+  }
+
+  void _zoomIn() => _moveTo(_currentCenter, _currentZoom + 1);
+
+  void _zoomOut() => _moveTo(_currentCenter, _currentZoom - 1);
+
+  Future<void> _goToMyLocation() async {
+    if (!await Geolocator.isLocationServiceEnabled()) return;
+
+    var permission = await Geolocator.checkPermission();
+
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) return;
+    }
+
+    if (permission == LocationPermission.deniedForever) return;
+
+    final pos = await Geolocator.getCurrentPosition(
+      desiredAccuracy: LocationAccuracy.high,
+    );
+
+    if (!mounted) return;
+
+    final myPos = LatLng(pos.latitude, pos.longitude);
+    setState(() => myPosition = myPos);
+
+    _moveTo(myPos, 16);
+  }
+
+  void _focusOnInterventionById(int interventionId) {
+    try {
+      final item = derangements.firstWhere((e) => e.id == interventionId);
+
+      final target = LatLng(item.latitude, item.longitude);
+      _moveTo(target, 17);
+
+      Future.delayed(const Duration(milliseconds: 350), () {
+        if (!mounted) return;
+        _showDerangementInfo(item);
+      });
+    } catch (e) {
+      debugPrint('Introuvable: $e');
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Position introuvable')),
+      );
+    }
+  }
+
+  void _showDerangementInfo(InterventionPointer item) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => const InfoDerangementSheet(
-        id: 'D-101',
-        nom: 'Dérangement Fibre',
-        typeService: 'Internet / Fibre',
-        priorite: 'Haute',
-        statut: 'En attente',
-        adresse: 'Rue Didouche Mourad, Alger',
-        clientNom: 'Client Test',
-        clientTelephone: '0550 00 00 00',
-        description:
-            'Le client signale une coupure totale de la connexion fibre depuis ce matin.',
+      barrierColor: Colors.black.withOpacity(0.25),
+      builder: (_) => DraggableScrollableSheet(
+        initialChildSize: 0.70,
+        minChildSize: 0.50,
+        maxChildSize: 0.95,
+        expand: false,
+        builder: (context, scrollController) {
+          return InfoDerangementSheet(
+            scrollController: scrollController,
+            id: item.id.toString(),
+            nom: _safe(item.typeReclamation, 'Dérangement'),
+            typeService: _safe(item.typeReclamation, 'Service'),
+            priorite: 'Haute',
+            statut: _safe(item.statut, 'En attente'),
+            adresse: _safe(item.adresse, 'Adresse indisponible'),
+            clientNom: _safe(item.clientNom, 'Client inconnu'),
+            clientTelephone: _safe(item.telephone, 'Téléphone indisponible'),
+            description: _safe(item.description, 'Aucune description'),
+            latitude: item.latitude,
+            longitude: item.longitude,
+          );
+        },
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final isDark = context.watch<ThemeProvider>().isDark;
+
+    final buttonColor = isDark ? const Color(0xFF1E293B) : Colors.white;
+    final shadowColor =
+        isDark ? Colors.black.withOpacity(0.35) : Colors.black.withOpacity(0.18);
+    final normalIconColor = isDark ? Colors.white : textDark;
+
     return Scaffold(
-      drawer: const AppMenuDrawer(),
+      backgroundColor: isDark ? const Color(0xFF0F172A) : const Color(0xFFF7FAFD),
+      extendBodyBehindAppBar: true,
       body: Stack(
         children: [
           FlutterMap(
@@ -85,14 +239,6 @@ class _ContractorHomePageState extends State<ContractorHomePage> {
             options: MapOptions(
               initialCenter: _currentCenter,
               initialZoom: _currentZoom,
-              onPositionChanged: (position, hasGesture) {
-                if (position.center != null) {
-                  _currentCenter = position.center!;
-                }
-                if (position.zoom != null) {
-                  _currentZoom = position.zoom!;
-                }
-              },
             ),
             children: [
               TileLayer(
@@ -102,153 +248,64 @@ class _ContractorHomePageState extends State<ContractorHomePage> {
               MarkerLayer(
                 markers: [
                   ...derangements.map(
-                    (point) => Marker(
-                      point: point,
+                    (item) => Marker(
+                      point: LatLng(item.latitude, item.longitude),
                       width: 50,
-                      height: 50,
+                      height: 58,
                       child: GestureDetector(
-                        onTap: _showDerangementInfo,
-                        child: const Icon(
-                          Icons.location_on,
-                          color: Colors.red,
-                          size: 42,
-                        ),
+                        onTap: () => _showDerangementInfo(item),
+                        child: const _JumpingOldPointer(),
                       ),
                     ),
                   ),
-                  Marker(
-                    point: _currentCenter,
-                    width: 50,
-                    height: 50,
-                    child: const Icon(
-                      Icons.my_location,
-                      color: Colors.blue,
-                      size: 30,
+                  if (myPosition != null)
+                    Marker(
+                      point: myPosition!,
+                      width: 56,
+                      height: 56,
+                      child: const Icon(
+                        Icons.my_location,
+                        color: blue,
+                        size: 38,
+                      ),
                     ),
-                  ),
                 ],
               ),
             ],
           ),
-          SafeArea(
-            child: Container(
-              height: 80,
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              decoration: const BoxDecoration(
-                color: Color(0xFF4E6CF1),
-                borderRadius: BorderRadius.vertical(
-                  bottom: Radius.circular(18),
-                ),
-              ),
-              child: Row(
+          _topHeader(),
+          Positioned(
+            right: 15,
+            bottom: 185,
+            child: ScaleTransition(
+              scale: _buttonScale,
+              child: Column(
                 children: [
-                  Builder(
-                    builder: (context) => InkWell(
-                      onTap: () => Scaffold.of(context).openDrawer(),
-                      borderRadius: BorderRadius.circular(30),
-                      child: Container(
-                        width: 42,
-                        height: 42,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: Colors.black87,
-                            width: 1.5,
-                          ),
-                        ),
-                        child: const Icon(
-                          Icons.menu,
-                          color: Colors.black87,
-                        ),
-                      ),
-                    ),
+                  _MapActionButton(
+                    icon: Icons.add,
+                    onTap: _zoomIn,
+                    buttonColor: buttonColor,
+                    shadowColor: shadowColor,
+                    iconColor: normalIconColor,
                   ),
-                  const Expanded(
-                    child: Center(
-                      child: Text(
-                        'IntervTrack',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 26,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
+                  const SizedBox(height: 9),
+                  _MapActionButton(
+                    icon: Icons.remove,
+                    onTap: _zoomOut,
+                    buttonColor: buttonColor,
+                    shadowColor: shadowColor,
+                    iconColor: normalIconColor,
                   ),
-                  InkWell(
-                    onTap: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Profil placeholder'),
-                        ),
-                      );
-                    },
-                    borderRadius: BorderRadius.circular(30),
-                    child: Container(
-                      width: 42,
-                      height: 42,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: Colors.black87,
-                          width: 1.5,
-                        ),
-                      ),
-                      child: const Icon(
-                        Icons.person_outline,
-                        color: Colors.black87,
-                      ),
-                    ),
+                  const SizedBox(height: 9),
+                  _MapActionButton(
+                    icon: Icons.my_location,
+                    onTap: _goToMyLocation,
+                    buttonColor: buttonColor,
+                    shadowColor: shadowColor,
+                    iconColor: blue,
+                    isLocation: true,
                   ),
                 ],
-              ),
-            ),
-          ),
-          Positioned(
-            right: 16,
-            bottom: 120,
-            child: Column(
-              children: [
-                _MapActionButton(
-                  icon: Icons.add,
-                  onTap: _zoomIn,
-                ),
-                const SizedBox(height: 10),
-                _MapActionButton(
-                  icon: Icons.remove,
-                  onTap: _zoomOut,
-                ),
-                const SizedBox(height: 10),
-                _MapActionButton(
-                  icon: Icons.my_location,
-                  onTap: _goToMyLocation,
-                ),
-              ],
-            ),
-          ),
-          Positioned(
-            bottom: 20,
-            left: 16,
-            right: 80,
-            child: Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(18),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.10),
-                    blurRadius: 10,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: Text(
-                'Dérangements affichés : ${derangements.length}',
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                ),
               ),
             ),
           ),
@@ -256,30 +313,224 @@ class _ContractorHomePageState extends State<ContractorHomePage> {
       ),
     );
   }
+
+  Widget _topHeader() {
+    final topPadding = MediaQuery.of(context).padding.top;
+
+    return Positioned(
+      top: 0,
+      left: 0,
+      right: 0,
+      child: FadeTransition(
+        opacity: _headerFade,
+        child: SlideTransition(
+          position: _headerSlide,
+          child: Container(
+            padding: EdgeInsets.fromLTRB(18, topPadding + 12, 16, 18),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [deepBlue, blue, green],
+                begin: Alignment.centerLeft,
+                end: Alignment.centerRight,
+              ),
+              borderRadius: const BorderRadius.vertical(
+                bottom: Radius.circular(30),
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: deepBlue.withOpacity(0.25),
+                  blurRadius: 24,
+                  offset: const Offset(0, 12),
+                ),
+              ],
+            ),
+            child: Row(
+              children: [
+                const Expanded(
+                  child: Center(
+                    child: Text(
+                      'IntervTrack',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 31,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: -0.5,
+                      ),
+                    ),
+                  ),
+                ),
+                _notificationButton(),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _notificationButton() {
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Material(
+          color: Colors.white.withOpacity(0.14),
+          borderRadius: BorderRadius.circular(17),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(17),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const NotificationsPage(),
+                ),
+              );
+
+              setState(() => unreadCount = 0);
+            },
+            child: const SizedBox(
+              width: 50,
+              height: 50,
+              child: Icon(
+                Icons.notifications_none_rounded,
+                color: Colors.white,
+                size: 32,
+              ),
+            ),
+          ),
+        ),
+        if (unreadCount > 0)
+          Positioned(
+            right: -2,
+            top: -3,
+            child: Container(
+              padding: const EdgeInsets.all(5),
+              decoration: BoxDecoration(
+                color: Colors.redAccent,
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 2),
+              ),
+              child: Text(
+                unreadCount > 9 ? '9+' : '$unreadCount',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
 }
 
-class _MapActionButton extends StatelessWidget {
+class _JumpingOldPointer extends StatefulWidget {
+  const _JumpingOldPointer();
+
+  @override
+  State<_JumpingOldPointer> createState() => _JumpingOldPointerState();
+}
+
+class _JumpingOldPointerState extends State<_JumpingOldPointer>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _jump;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 950),
+    )..repeat(reverse: true);
+
+    _jump = Tween<double>(begin: 0, end: -8).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: Curves.easeInOut,
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _jump,
+      builder: (context, child) {
+        return Transform.translate(
+          offset: Offset(0, _jump.value),
+          child: child,
+        );
+      },
+      child: const Icon(
+        Icons.location_on,
+        color: Colors.red,
+        size: 42,
+      ),
+    );
+  }
+}
+
+class _MapActionButton extends StatefulWidget {
   final IconData icon;
   final VoidCallback onTap;
+  final bool isLocation;
+  final Color buttonColor;
+  final Color shadowColor;
+  final Color iconColor;
 
   const _MapActionButton({
     required this.icon,
     required this.onTap,
+    required this.buttonColor,
+    required this.shadowColor,
+    required this.iconColor,
+    this.isLocation = false,
   });
 
   @override
+  State<_MapActionButton> createState() => _MapActionButtonState();
+}
+
+class _MapActionButtonState extends State<_MapActionButton> {
+  double _scale = 1;
+
+  @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(14),
-      elevation: 4,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(14),
-        onTap: onTap,
-        child: SizedBox(
+    return AnimatedScale(
+      scale: _scale,
+      duration: const Duration(milliseconds: 110),
+      child: GestureDetector(
+        onTapDown: (_) => setState(() => _scale = 0.92),
+        onTapUp: (_) => setState(() => _scale = 1),
+        onTapCancel: () => setState(() => _scale = 1),
+        onTap: widget.onTap,
+        child: Container(
           width: 48,
           height: 48,
-          child: Icon(icon, color: Colors.black87),
+          decoration: BoxDecoration(
+            color: widget.buttonColor,
+            borderRadius: BorderRadius.circular(17),
+            boxShadow: [
+              BoxShadow(
+                color: widget.shadowColor,
+                blurRadius: 18,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Icon(
+            widget.icon,
+            color: widget.iconColor,
+            size: widget.isLocation ? 27 : 31,
+          ),
         ),
       ),
     );
