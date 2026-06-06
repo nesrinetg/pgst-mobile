@@ -6,9 +6,13 @@ import 'package:mobile_app/l10n/app_localizations.dart';
 import 'config/theme_provider.dart';
 import 'config/language_provider.dart';
 import 'services/auth_service.dart';
+import 'services/polling_notification_service.dart';
 import 'screens/app_gate.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await PollingNotificationService.init();
+
   runApp(
     MultiProvider(
       providers: [

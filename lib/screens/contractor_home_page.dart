@@ -1,11 +1,11 @@
 import 'dart:async';
-
+import '../services/notification_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
- 
+
 import '../config/theme_provider.dart';
 import '../models/intervention_pointer.dart';
 import '../services/api_service.dart';
@@ -15,19 +15,17 @@ import 'notifications_page.dart';
 class ContractorHomePage extends StatefulWidget {
   final int? focusInterventionId;
 
-  const ContractorHomePage({
-    super.key,
-    this.focusInterventionId,
-  });
+  const ContractorHomePage({super.key, this.focusInterventionId});
 
   @override
   State<ContractorHomePage> createState() => _ContractorHomePageState();
 }
 
 class _ContractorHomePageState extends State<ContractorHomePage>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   final MapController _mapController = MapController();
   final ApiService _apiService = ApiService();
+  final NotificationService _notificationService = NotificationService();
 
   double _currentZoom = 14.5;
   LatLng _currentCenter = LatLng(36.7525, 3.0420);
@@ -36,11 +34,15 @@ class _ContractorHomePageState extends State<ContractorHomePage>
   List<InterventionPointer> derangements = [];
 
   int unreadCount = 0;
+  Timer? notificationTimer;
 
   late AnimationController _animController;
+  late AnimationController _notifController;
+
   late Animation<double> _headerFade;
   late Animation<Offset> _headerSlide;
   late Animation<double> _buttonScale;
+  late Animation<double> _notifJump;
 
   static const Color blue = Color(0xFF005BAA);
   static const Color deepBlue = Color(0xFF003B73);
@@ -56,36 +58,45 @@ class _ContractorHomePageState extends State<ContractorHomePage>
       duration: const Duration(milliseconds: 650),
     );
 
+    _notifController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 700),
+    );
+
+    _notifJump = Tween<double>(begin: 1, end: 1.25).animate(
+      CurvedAnimation(parent: _notifController, curve: Curves.elasticOut),
+    );
+
     _headerFade = CurvedAnimation(
       parent: _animController,
       curve: Curves.easeOut,
     );
 
-    _headerSlide = Tween<Offset>(
-      begin: const Offset(0, -0.10),
-      end: Offset.zero,
-    ).animate(
-      CurvedAnimation(
-        parent: _animController,
-        curve: Curves.easeOutCubic,
-      ),
+    _headerSlide =
+        Tween<Offset>(begin: const Offset(0, -0.10), end: Offset.zero).animate(
+      CurvedAnimation(parent: _animController, curve: Curves.easeOutCubic),
     );
 
     _buttonScale = Tween<double>(begin: 0.90, end: 1).animate(
-      CurvedAnimation(
-        parent: _animController,
-        curve: Curves.easeOutBack,
-      ),
+      CurvedAnimation(parent: _animController, curve: Curves.easeOutBack),
     );
 
     _animController.forward();
 
     loadNotifications();
+
+    notificationTimer = Timer.periodic(
+      const Duration(seconds: 20),
+      (_) => loadNotifications(),
+    );
+
     _loadPointers();
   }
 
   @override
   void dispose() {
+    notificationTimer?.cancel();
+    _notifController.dispose();
     _animController.dispose();
     super.dispose();
   }
@@ -109,8 +120,14 @@ class _ContractorHomePageState extends State<ContractorHomePage>
 
       if (!mounted) return;
 
+      final newCount = data.length;
+
+      if (newCount > unreadCount) {
+        _notifController.forward(from: 0);
+      }
+
       setState(() {
-        unreadCount = data.length;
+        unreadCount = newCount;
       });
     } catch (e) {
       debugPrint(e.toString());
@@ -225,12 +242,14 @@ class _ContractorHomePageState extends State<ContractorHomePage>
     final isDark = context.watch<ThemeProvider>().isDark;
 
     final buttonColor = isDark ? const Color(0xFF1E293B) : Colors.white;
-    final shadowColor =
-        isDark ? Colors.black.withOpacity(0.35) : Colors.black.withOpacity(0.18);
+    final shadowColor = isDark
+        ? Colors.black.withOpacity(0.35)
+        : Colors.black.withOpacity(0.18);
     final normalIconColor = isDark ? Colors.white : textDark;
 
     return Scaffold(
-      backgroundColor: isDark ? const Color(0xFF0F172A) : const Color(0xFFF7FAFD),
+      backgroundColor:
+          isDark ? const Color(0xFF0F172A) : const Color(0xFFF7FAFD),
       extendBodyBehindAppBar: true,
       body: Stack(
         children: [
@@ -372,49 +391,85 @@ class _ContractorHomePageState extends State<ContractorHomePage>
     return Stack(
       clipBehavior: Clip.none,
       children: [
-        Material(
-          color: Colors.white.withOpacity(0.14),
-          borderRadius: BorderRadius.circular(17),
-          child: InkWell(
+        AnimatedBuilder(
+          animation: _notifJump,
+          builder: (context, child) {
+            return Transform.scale(
+              scale: _notifJump.value,
+              child: child,
+            );
+          },
+          child: Material(
+            color: Colors.white.withOpacity(0.14),
             borderRadius: BorderRadius.circular(17),
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => const NotificationsPage(),
-                ),
-              );
+            child: InkWell(
+              borderRadius: BorderRadius.circular(17),
+              onTap: () async {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const NotificationsPage(),
+                  ),
+                );
 
-              setState(() => unreadCount = 0);
-            },
-            child: const SizedBox(
-              width: 50,
-              height: 50,
-              child: Icon(
-                Icons.notifications_none_rounded,
-                color: Colors.white,
-                size: 32,
+                await loadNotifications();
+              },
+              child: const SizedBox(
+                width: 50,
+                height: 50,
+                child: Icon(
+                  Icons.notifications_none_rounded,
+                  color: Colors.white,
+                  size: 32,
+                ),
               ),
             ),
           ),
         ),
         if (unreadCount > 0)
           Positioned(
-            right: -2,
-            top: -3,
-            child: Container(
-              padding: const EdgeInsets.all(5),
-              decoration: BoxDecoration(
-                color: Colors.redAccent,
-                shape: BoxShape.circle,
-                border: Border.all(color: Colors.white, width: 2),
-              ),
-              child: Text(
-                unreadCount > 9 ? '9+' : '$unreadCount',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 9,
-                  fontWeight: FontWeight.w900,
+            right: -5,
+            top: -6,
+            child: TweenAnimationBuilder<double>(
+              key: ValueKey(unreadCount),
+              tween: Tween(begin: 0.75, end: 1),
+              duration: const Duration(milliseconds: 650),
+              curve: Curves.elasticOut,
+              builder: (context, value, child) {
+                return Transform.scale(
+                  scale: value,
+                  child: child,
+                );
+              },
+              child: Container(
+                constraints: const BoxConstraints(
+                  minWidth: 23,
+                  minHeight: 23,
+                ),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 6,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.redAccent,
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: Colors.white, width: 2),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.redAccent.withOpacity(0.45),
+                      blurRadius: 12,
+                      offset: const Offset(0, 5),
+                    ),
+                  ],
+                ),
+                child: Text(
+                  unreadCount > 9 ? '9+' : '$unreadCount',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w900,
+                  ),
                 ),
               ),
             ),
@@ -445,7 +500,10 @@ class _JumpingOldPointerState extends State<_JumpingOldPointer>
       duration: const Duration(milliseconds: 950),
     )..repeat(reverse: true);
 
-    _jump = Tween<double>(begin: 0, end: -8).animate(
+    _jump = Tween<double>(
+      begin: 0,
+      end: -8,
+    ).animate(
       CurvedAnimation(
         parent: _controller,
         curve: Curves.easeInOut,
